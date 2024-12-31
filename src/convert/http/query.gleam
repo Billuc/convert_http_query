@@ -166,14 +166,16 @@ pub fn decode_value(
     convert.BitArray -> decode_bit_array(_, ["bit_array"])
     convert.Bool -> decode_bool(_, ["bool"])
     convert.Dict(k, v) -> decode_dict(_, k, v, ["dict"])
-    convert.Dynamic -> fn(_) { Ok(convert.DynamicValue(dynamic.from(Nil))) }
+    convert.Dynamic -> fn(query) {
+      Ok(convert.DynamicValue(dynamic.from(query)))
+    }
     convert.Enum(variants) -> decode_enum(_, variants, [])
     convert.Float -> decode_float(_, ["float"])
     convert.Int -> decode_int(_, ["int"])
     convert.List(els) -> decode_list(_, els, ["list"], 0, [])
     convert.Null -> fn(_) { Ok(convert.NullValue) }
     convert.Object(fields) -> decode_object(_, fields, [])
-    convert.Optional(_) -> decode_optional(_, of, ["optional"])
+    convert.Optional(el) -> decode_optional(_, el, ["optional"])
     convert.Result(ok, err) -> decode_result(_, ok, err, ["result"])
     convert.String -> decode_string(_, ["string"])
   }
@@ -357,7 +359,7 @@ fn decode_dict_key(
 ) -> Result(convert.GlitrValue, QueryDecodeError) {
   let path = string.join(location, ".")
   use <- bool.guard(
-    string.starts_with(key, path),
+    !string.starts_with(key, path),
     Error(
       DecodeError([
         dynamic.DecodeError("A string starting with the path", key, location),
