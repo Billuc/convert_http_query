@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v1.0.1 - 17/06/2025
+
+**Changes**
+
+- Update to stdlib 0.60.0
+
 ## v1.0.0 - 31/12/2024
 
 Initial release
