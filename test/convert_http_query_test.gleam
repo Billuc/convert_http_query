@@ -2,6 +2,7 @@ import convert
 import convert/http/query
 import gleam/dict
 import gleam/dynamic
+import gleam/dynamic/decode
 import gleam/option
 import gleeunit
 import gleeunit/should
@@ -80,7 +81,7 @@ pub fn encode_dict_test() {
 }
 
 pub fn encode_dynamic_unsupported_test() {
-  query.encode_value(convert.DynamicValue(dynamic.from(5)))
+  query.encode_value(convert.DynamicValue(dynamic.int(5)))
   |> should.equal([])
 }
 
@@ -257,7 +258,7 @@ pub fn decode_error_if_no_key_test() {
   []
   |> query.decode_value(convert.Int)
   |> should.be_error
-  |> should.equal([dynamic.DecodeError("Key not found", "", ["int"])])
+  |> should.equal([decode.DecodeError("Key not found", "", ["int"])])
 }
 
 pub fn decode_error_if_wrong_type_test() {
@@ -265,7 +266,7 @@ pub fn decode_error_if_wrong_type_test() {
   |> query.decode_value(convert.Int)
   |> should.be_error
   |> should.equal([
-    dynamic.DecodeError("An integer string representation", "hello", ["int"]),
+    decode.DecodeError("An integer string representation", "hello", ["int"]),
   ])
 }
 
@@ -273,7 +274,11 @@ pub fn decode_dynamic_returns_query_as_dynamic_test() {
   [#("int", "5")]
   |> query.decode_value(convert.Dynamic)
   |> should.be_ok
-  |> should.equal(convert.DynamicValue(dynamic.from([#("int", "5")])))
+  |> should.equal(
+    convert.DynamicValue(
+      dynamic.properties([#(dynamic.string("int"), dynamic.string("5"))]),
+    ),
+  )
 }
 
 pub fn decode_object_test() {
