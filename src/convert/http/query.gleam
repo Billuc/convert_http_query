@@ -3,6 +3,7 @@ import gleam/bit_array
 import gleam/bool
 import gleam/dict
 import gleam/dynamic
+import gleam/dynamic/decode
 import gleam/float
 import gleam/int
 import gleam/list
@@ -12,7 +13,7 @@ import gleam/string
 
 type QueryDecodeError {
   KeyNotFound(key: String)
-  DecodeError(errors: List(dynamic.DecodeError))
+  DecodeError(errors: List(decode.DecodeError))
 }
 
 pub fn encode(
@@ -61,25 +62,22 @@ fn encode_dict(
     val
     |> dict.to_list()
     |> list.map(fn(kv) {
-      case encode_dict_key(kv.0) {
-        "" -> Error(Nil)
-        key -> {
-          Ok(encode_sub_value(kv.1, list.append(path, [key])))
-        }
-      }
+      encode_dict_key(kv.0)
+      |> result.map(fn(key) { encode_sub_value(kv.1, list.append(path, [key])) })
     })
     |> result.partition()
+
   result_partition.0 |> list.reverse() |> list.flatten()
 }
 
-fn encode_dict_key(key: convert.GlitrValue) -> String {
+fn encode_dict_key(key: convert.GlitrValue) -> Result(String, Nil) {
   case key {
-    convert.BoolValue(v) -> bool.to_string(v)
-    convert.FloatValue(v) -> float.to_string(v)
-    convert.IntValue(v) -> int.to_string(v)
-    convert.StringValue(v) -> v
-    convert.BitArrayValue(v) -> bit_array.base64_url_encode(v, True)
-    _ -> ""
+    convert.BoolValue(v) -> bool.to_string(v) |> Ok
+    convert.FloatValue(v) -> float.to_string(v) |> Ok
+    convert.IntValue(v) -> int.to_string(v) |> Ok
+    convert.StringValue(v) -> Ok(v)
+    convert.BitArrayValue(v) -> bit_array.base64_url_encode(v, True) |> Ok
+    _ -> Error(Nil)
   }
 }
 
@@ -88,13 +86,10 @@ fn encode_list(
   path: List(String),
 ) -> List(#(String, String)) {
   val
-  |> list.index_fold([], fn(acc, value, index) {
-    list.flatten([
-      encode_sub_value(value, list.append(path, [int.to_string(index)])),
-      acc,
-    ])
+  |> list.index_map(fn(value, index) {
+    encode_sub_value(value, list.append(path, [int.to_string(index)]))
   })
-  |> list.reverse()
+  |> list.flatten()
 }
 
 fn encode_result(
@@ -153,7 +148,7 @@ fn encode_sub_value(
 pub fn decode(
   query: List(#(String, String)),
   converter: convert.Converter(a),
-) -> Result(a, List(dynamic.DecodeError)) {
+) -> Result(a, List(decode.DecodeError)) {
   decode_value(converter |> convert.type_def)(query)
   |> result.then(convert.decode(converter))
 }
@@ -161,13 +156,17 @@ pub fn decode(
 pub fn decode_value(
   of: convert.GlitrType,
 ) -> fn(List(#(String, String))) ->
-  Result(convert.GlitrValue, List(dynamic.DecodeError)) {
+  Result(convert.GlitrValue, List(decode.DecodeError)) {
   let decode_fn = case of {
     convert.BitArray -> decode_bit_array(_, ["bit_array"])
     convert.Bool -> decode_bool(_, ["bool"])
     convert.Dict(k, v) -> decode_dict(_, k, v, ["dict"])
-    convert.Dynamic -> fn(query) {
-      Ok(convert.DynamicValue(dynamic.from(query)))
+    convert.Dynamic -> fn(query: List(#(String, String))) {
+      query
+      |> list.map(fn(el) { #(dynamic.string(el.0), dynamic.string(el.1)) })
+      |> dynamic.properties()
+      |> convert.DynamicValue
+      |> Ok
     }
     convert.Enum(variants) -> decode_enum(_, variants, [])
     convert.Float -> decode_float(_, ["float"])
@@ -193,7 +192,7 @@ fn decode_sub_value(
     convert.BitArray -> decode_bit_array(_, location)
     convert.Bool -> decode_bool(_, location)
     convert.Dict(k, v) -> decode_dict(_, k, v, location)
-    convert.Dynamic -> fn(_) { Ok(convert.DynamicValue(dynamic.from(Nil))) }
+    convert.Dynamic -> fn(_) { Ok(convert.DynamicValue(dynamic.nil())) }
     convert.Enum(variants) -> decode_enum(_, variants, location)
     convert.Float -> fn(v) { decode_float(v, location) }
     convert.Int -> fn(v) { decode_int(v, location) }
@@ -224,7 +223,7 @@ fn decode_bit_array(
   bit_array.base64_url_decode(v)
   |> result.map(convert.BitArrayValue)
   |> result.replace_error(
-    DecodeError([dynamic.DecodeError("A base64 encoded bit array", v, location)]),
+    DecodeError([decode.DecodeError("A base64 encoded bit array", v, location)]),
   )
 }
 
@@ -236,7 +235,7 @@ fn decode_bool(
   case v {
     "True" -> Ok(convert.BoolValue(True))
     "False" -> Ok(convert.BoolValue(False))
-    _ -> Error(DecodeError([dynamic.DecodeError("True or False", v, location)]))
+    _ -> Error(DecodeError([decode.DecodeError("True or False", v, location)]))
   }
 }
 
@@ -249,7 +248,7 @@ fn decode_int(
   |> result.map(convert.IntValue)
   |> result.replace_error(
     DecodeError([
-      dynamic.DecodeError("An integer string representation", v, location),
+      decode.DecodeError("An integer string representation", v, location),
     ]),
   )
 }
@@ -263,7 +262,7 @@ fn decode_float(
   |> result.map(convert.FloatValue)
   |> result.replace_error(
     DecodeError([
-      dynamic.DecodeError("A float string representation", v, location),
+      decode.DecodeError("A float string representation", v, location),
     ]),
   )
 }
@@ -362,7 +361,7 @@ fn decode_dict_key(
     !string.starts_with(key, path),
     Error(
       DecodeError([
-        dynamic.DecodeError("A string starting with the path", key, location),
+        decode.DecodeError("A string starting with the path", key, location),
       ]),
     ),
   )
@@ -375,7 +374,7 @@ fn decode_dict_key(
         "False" -> Ok(convert.BoolValue(False))
         _ ->
           Error(
-            DecodeError([dynamic.DecodeError("True or False", key, location)]),
+            DecodeError([decode.DecodeError("True or False", key, location)]),
           )
       }
     convert.Float ->
@@ -383,7 +382,7 @@ fn decode_dict_key(
       |> result.map(convert.FloatValue)
       |> result.replace_error(
         DecodeError([
-          dynamic.DecodeError("A float string representation", key, location),
+          decode.DecodeError("A float string representation", key, location),
         ]),
       )
     convert.Int ->
@@ -391,7 +390,7 @@ fn decode_dict_key(
       |> result.map(convert.IntValue)
       |> result.replace_error(
         DecodeError([
-          dynamic.DecodeError("An integer string representation", key, location),
+          decode.DecodeError("An integer string representation", key, location),
         ]),
       )
     convert.String -> Ok(convert.StringValue(keyvalue))
@@ -400,12 +399,12 @@ fn decode_dict_key(
       |> result.map(convert.BitArrayValue)
       |> result.replace_error(
         DecodeError([
-          dynamic.DecodeError("A base64 encoded bit array", key, location),
+          decode.DecodeError("A base64 encoded bit array", key, location),
         ]),
       )
     _ ->
       Error(
-        DecodeError([dynamic.DecodeError("Unsupported key type", key, location)]),
+        DecodeError([decode.DecodeError("Unsupported key type", key, location)]),
       )
   }
 }
@@ -434,16 +433,16 @@ fn decode_enum(
     decode_sub_value(variant.1, list.append(location, [variant.0]))(query)
   })
   |> result.replace_error(
-    DecodeError([dynamic.DecodeError("One of the enum variants", "", location)]),
+    DecodeError([decode.DecodeError("One of the enum variants", "", location)]),
   )
 }
 
 fn query_decode_error_to_decode_errors(
   err: QueryDecodeError,
-) -> List(dynamic.DecodeError) {
+) -> List(decode.DecodeError) {
   case err {
     KeyNotFound(key) -> [
-      dynamic.DecodeError("Key not found", "", string.split(key, ".")),
+      decode.DecodeError("Key not found", "", string.split(key, ".")),
     ]
     DecodeError(errors) -> errors
   }
